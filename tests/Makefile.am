@@ -214,6 +214,10 @@ REGEXP_TESTS = \
 	field_tokenized_with_regex.sh \
 	field_regex_while_regex_support_is_disabled.sh
 
+XML_TESTS = \
+	field_xml.sh \
+	field_xml_jsoncnf.sh
+
 EXTRA_DIST = exec.sh \
 	$(TESTS_SHELLSCRIPTS) \
 	$(TESTS_TURBO_SHELLS) \
@@ -323,4 +327,8 @@ turbo_test_json_LDADD = ../src/liblognorm.la -lm
 turbo_test_json_LDFLAGS = -no-install
 
 TESTS += turbo_test_arena turbo_test_result turbo_test_simd turbo_test_vm turbo_test_json turbo_test_compile turbo_test_date turbo_test_dupfield turbo_test_cef turbo_test_annot turbo_test_maxval turbo_test_time turbo_test_charset turbo_test_word turbo_test_leadws turbo_test_checkpoint turbo_test_find
+endif
+
+if ENABLE_XML
+TESTS += $(XML_TESTS)
 endif
