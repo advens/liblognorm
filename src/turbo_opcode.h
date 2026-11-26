@@ -125,6 +125,8 @@ typedef enum {
                               *   flags LN_INSTR_F_REPEAT_PERMIT =
                               *   permitMismatchInParser; aux bit0 =
                               *   failOnDuplicate. */
+	OP_FIELD_XML    = 0x7A,  /**< XML document, stored as a JSON object.
+	                         *   Emitted only when FEATURE_XML is on. */
 
 	/*=== Debug (0xF0-0xFF) ===*/
 	OP_NOP          = 0xF0,  /**< No operation */

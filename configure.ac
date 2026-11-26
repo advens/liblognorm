@@ -88,6 +88,32 @@ else
 fi
 AC_SUBST(FEATURE_REGEXP)
 
+# XML field parser. Off unless a pipeline passes --enable-xml. The
+# field type reads one document with libxml2 and stores a JSON object.
+# Default stays off so a build without libxml2 (a WebAssembly build,
+# for one) still configures.
+AC_ARG_ENABLE(xml,
+        [AS_HELP_STRING([--enable-xml],[Enable XML parsing @<:@default=no@:>@])],
+        [case "${enableval}" in
+         yes) enable_xml="yes" ;;
+          no) enable_xml="no" ;;
+           *) AC_MSG_ERROR(bad value ${enableval} for --enable-xml) ;;
+         esac],
+        [enable_xml="no"]
+)
+AM_CONDITIONAL(ENABLE_XML, test x$enable_xml = xyes)
+if test "$enable_xml" = "yes"; then
+        PKG_CHECK_MODULES(LIBXML2, libxml2,,
+                [PKG_CHECK_MODULES(LIBXML2, libxml-2.0,,)]
+        )
+        AC_DEFINE(FEATURE_XML, 1, [XML parsing support enabled.])
+	FEATURE_XML=1
+	pkg_config_libs_private="$pkg_config_libs_private $LIBXML2_LIBS"
+else
+	FEATURE_XML=0
+fi
+AC_SUBST(FEATURE_XML)
+
 # debug mode settings
 AC_ARG_ENABLE(debug,
         [AS_HELP_STRING([--enable-debug],[Enable debug mode @<:@default=no@:>@])],
@@ -222,6 +248,7 @@ echo "*****************************************************"
 echo "liblognorm will be compiled with the following settings:"
 echo
 echo "Regex enabled:               $enable_regexp"
+echo "XML enabled:                 $enable_xml"
 echo "Advanced Statistics enabled: $enable_advstats"
 echo "Testbench enabled:           $enable_testbench"
 echo "Valgrind enabled:            $enable_valgrind"

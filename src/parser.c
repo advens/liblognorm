@@ -41,8 +41,15 @@
 #include "lognorm.h"
 #include "internal.h"
 #include "parser.h"
+#include "rewrite.h"
 #include "samp.h"
 #include "helpers.h"
+
+#ifdef FEATURE_XML
+#include <limits.h>
+#include <libxml/parser.h>
+#include <libxml/xmlmemory.h>
+#endif
 
 /* how should output values be formatted? */
 enum FMT_MODE {
@@ -70,6 +77,148 @@ hParseInt(const unsigned char **buf, size_t *lenBuf)
 	*lenBuf = len;
 	return i;
 }
+
+#ifdef FEATURE_XML
+static int
+xmlNodeHasElementChildren(xmlNode *node)
+{
+	for(xmlNode *child = node->children; child != NULL; child = child->next) {
+		if(child->type == XML_ELEMENT_NODE)
+			return 1;
+	}
+	return 0;
+}
+
+/* Leaf text is a JSON string. Element children become an object. A later
+ * sibling with the same local name replaces the earlier one. Attributes
+ * and namespace URIs are not stored. */
+static int
+xmlNodeToJSON(xmlNode *node, struct json_object **out)
+{
+	xmlChar *content = NULL;
+	struct json_object *json = NULL;
+
+	*out = NULL;
+
+	if(!xmlNodeHasElementChildren(node)) {
+		content = xmlNodeGetContent(node);
+		json = json_object_new_string((const char *)
+			(content == NULL ? BAD_CAST "" : content));
+		if(json == NULL)
+			goto nomem;
+		*out = json;
+		json = NULL;
+		goto done;
+	}
+
+	json = json_object_new_object();
+	if(json == NULL)
+		goto nomem;
+	for(xmlNode *child = node->children; child != NULL; child = child->next) {
+		struct json_object *child_json = NULL;
+		int child_r;
+
+		if(child->type != XML_ELEMENT_NODE)
+			continue;
+		child_r = xmlNodeToJSON(child, &child_json);
+		if(child_r != 0) {
+			if(child_json != NULL)
+				json_object_put(child_json);
+			json_object_put(json);
+			json = NULL;
+			return child_r;
+		}
+		json_object_object_add(json, (const char *)child->name, child_json);
+	}
+
+	*out = json;
+	json = NULL;
+done:
+	if(content != NULL)
+		xmlFree(content);
+	if(json != NULL)
+		json_object_put(json);
+	return 0;
+nomem:
+	if(content != NULL)
+		xmlFree(content);
+	return LN_NOMEM;
+}
+
+int
+ln_xml_parse(const char *str, size_t strLen, size_t offs,
+	     struct json_object **value, size_t *parsed)
+{
+	xmlDocPtr doc = NULL;
+	xmlNodePtr root_element = NULL;
+	struct json_object *json = NULL;
+	struct json_object *root_json = NULL;
+	size_t newLen = 0;
+	const char *input;
+	int r = LN_WRONGPARSER;
+	int conv;
+
+	*parsed = 0;
+	if(value != NULL)
+		*value = NULL;
+	if(str == NULL || offs >= strLen)
+		return r;
+	input = str + offs;
+	if(*input != '<')
+		return r;
+
+	/* Hand libxml2 only the span that ends at the last '>'. A missing
+	 * closer is a miss. The caller still has to consume any bytes that
+	 * follow that closer. */
+	for(size_t i = strLen; i > offs; --i) {
+		if(str[i - 1] == '>') {
+			newLen = i - offs;
+			break;
+		}
+	}
+	if(newLen == 0 || newLen > (size_t)INT_MAX)
+		return r;
+
+	doc = xmlReadMemory(input, (int)newLen, "liblognorm.xml", NULL,
+		XML_PARSE_NONET | XML_PARSE_NOERROR | XML_PARSE_NOWARNING);
+	if(doc == NULL)
+		goto done;
+	root_element = xmlDocGetRootElement(doc);
+	if(root_element == NULL || root_element->type != XML_ELEMENT_NODE)
+		goto done;
+
+	json = json_object_new_object();
+	if(json == NULL) {
+		r = LN_NOMEM;
+		goto done;
+	}
+	conv = xmlNodeToJSON(root_element, &root_json);
+	if(conv != 0) {
+		r = conv;
+		goto done;
+	}
+	json_object_object_add(json, (const char *)root_element->name, root_json);
+	root_json = NULL;
+
+	*parsed = newLen;
+	r = 0;
+	if(value == NULL) {
+		json_object_put(json);
+		json = NULL;
+	} else {
+		*value = json;
+		json = NULL;
+	}
+done:
+	if(root_json != NULL)
+		json_object_put(root_json);
+	if(json != NULL)
+		json_object_put(json);
+	if(doc != NULL)
+		xmlFreeDoc(doc);
+	return r;
+}
+#endif /* FEATURE_XML */
 
 /* parser _parse interface
  *
@@ -2788,7 +2937,8 @@ static int
 parseNameValue(npb_t *const npb,
 	size_t *const __restrict__ offs,
 	struct json_object *const __restrict__ valroot,
-	const char sep, const char ass, const bool ignore_ws)
+	const char sep, const char ass, const bool ignore_ws,
+	const struct ln_rw_tab *tab)
 {
 	int r = LN_WRONGPARSER;
 	size_t i = *offs;
@@ -2905,12 +3055,37 @@ parseNameValue(npb_t *const npb,
 	if(valroot == NULL)
 		goto done;
 
+	if(tab != NULL) {
+		const struct ln_rw_ent *ent = ln_rw_lookup(tab, npb->str + iName, lenName);
+		json_object *json;
+
+		if(ent == NULL)
+			goto done;
+		if(ent->lower && lenVal > 0) {
+			size_t k;
+
+			CHKN(name = malloc(lenVal));
+			memcpy(name, npb->str + iVal, lenVal);
+			for(k = 0; k < lenVal; ++k) {
+				if(name[k] >= 'A' && name[k] <= 'Z')
+					name[k] = (char)(name[k] + 32);
+			}
+			CHKN(json = json_object_new_string_len(name, lenVal));
+		} else {
+			CHKN(json = json_object_new_string_len(npb->str + iVal, lenVal));
+		}
+		json_object_object_add(valroot, ent->dst, json);
+		goto done;
+	}
+
 	CHKN(name = malloc(lenName+1));
 	memcpy(name, npb->str+iName, lenName);
 	name[lenName] = '\0';
-	json_object *json;
-	CHKN(json = json_object_new_string_len(npb->str+iVal, lenVal));
-	json_object_object_add(valroot, name, json);
+	{
+		json_object *json;
+		CHKN(json = json_object_new_string_len(npb->str+iVal, lenVal));
+		json_object_object_add(valroot, name, json);
+	}
 done:
 	free(name);
 	return r;
@@ -3007,7 +3182,7 @@ PARSER_Parse(NameValue)
 
 	/* stage one */
 	while(i < npb->strLen) {
-		if (parseNameValue(npb, &i, NULL, sep, ass, ignore_ws) == 0 ) {
+		if (parseNameValue(npb, &i, NULL, sep, ass, ignore_ws, NULL) == 0 ) {
 			if(ignore_ws && sep != 0) {
 				while(i < npb->strLen && isspace((unsigned char) npb->str[i]))
 					++i;
@@ -3032,8 +3207,11 @@ PARSER_Parse(NameValue)
 
 	i = *offs;
 	CHKN(*value = json_object_new_object());
+	{
+	const struct ln_rw_tab *tab = ln_rewrite_tab_for_parser(npb->ctx, npb->prs);
+
 	while(i < npb->strLen) {
-		if (parseNameValue(npb, &i, *value, sep, ass, ignore_ws) == 0 ) {
+		if (parseNameValue(npb, &i, *value, sep, ass, ignore_ws, tab) == 0 ) {
 			if(ignore_ws && sep != 0) {
 				while(i < npb->strLen && isspace((unsigned char) npb->str[i]))
 					++i;
@@ -3046,6 +3224,7 @@ PARSER_Parse(NameValue)
 		} else {
 			break;
 		}
+	}
 	}
 
 	/* TODO: fix mem leak if alloc json fails */
@@ -3225,6 +3404,12 @@ cefParseExtensionValue(npb_t *const npb,
 		}
 	}
 
+	/* a backslash that ends the message escapes nothing; the unescape
+	 * loop in cefParseExtensions() relies on every escape having a
+	 * following character */
+	if(inEscape)
+		FAIL(LN_WRONGPARSER);
+
 	/* Note: iLastWordBegin can never be at offset zero, because
 	 * the CEF header starts there!
 	 */
@@ -3277,8 +3462,15 @@ cefParseExtensions(npb_t *const npb,
 	size_t iValue, lenValue;
 	char *name = NULL;
 	char *value = NULL;
+	const struct ln_rw_tab *tab;
+
+	tab = NULL;
+	if(jroot != NULL)
+		tab = ln_rewrite_tab_for_parser(npb->ctx, npb->prs);
 
 	while(i < npb->strLen) {
+		const struct ln_rw_ent *ent = NULL;
+
 		while(i < npb->strLen && npb->str[i] == ' ')
 			++i;
 		iName = i;
@@ -3300,7 +3492,10 @@ cefParseExtensions(npb_t *const npb,
 			++i; /* skip past value */
 		}
 
-		if(jroot != NULL) {
+		/* with a rewrite table, only the keys it lists are stored */
+		if(jroot != NULL && tab != NULL)
+			ent = ln_rw_lookup(tab, npb->str + iName, lenName);
+		if(jroot != NULL && (tab == NULL || ent != NULL)) {
 			CHKN(name = malloc(sizeof(char) * (lenName + 1)));
 			memcpy(name, npb->str+iName, lenName);
 			name[lenName] = '\0';
@@ -3329,9 +3524,15 @@ cefParseExtensions(npb_t *const npb,
 				++iDst;
 			}
 			value[iDst] = '\0';
+			if(ent != NULL && ent->lower) {
+				for(size_t k = 0 ; k < iDst ; ++k) {
+					if(value[k] >= 'A' && value[k] <= 'Z')
+						value[k] = (char)(value[k] + 32);
+				}
+			}
 			json_object *json;
 			CHKN(json = json_object_new_string(value));
-			json_object_object_add(jroot, name, json);
+			json_object_object_add(jroot, (ent != NULL) ? ent->dst : name, json);
 			free(name); name = NULL;
 			free(value); value = NULL;
 		}
@@ -4185,3 +4386,12 @@ PARSER_Destruct(String)
 {
 	free(pdata);
 }
+
+#ifdef FEATURE_XML
+/* The document must start at '<'. Bytes after the last '>' are left for
+ * the rest of the rule. */
+PARSER_Parse(XML)
+	r = ln_xml_parse(npb->str, npb->strLen, *offs, value, parsed);
+	return r;
+}
+#endif /* FEATURE_XML */

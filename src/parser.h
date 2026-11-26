@@ -80,8 +80,19 @@ PARSERDEF_NO_DATA(MAC48);
 PARSERDEF_NO_DATA(CEF);
 PARSERDEF(CheckpointLEA);
 PARSERDEF(NameValue);
+#ifdef FEATURE_XML
+PARSERDEF_NO_DATA(XML);
+#endif
 
 #undef PARSERDEF_NO_DATA
+
+#ifdef FEATURE_XML
+/* One XML document at str[offs] becomes a JSON object {rootName: ...}.
+ * *parsed is the byte length through the last '>' of that span.
+ * Namespaces are not represented: the same local name overwrites. */
+int ln_xml_parse(const char *str, size_t strLen, size_t offs,
+		 struct json_object **value, size_t *parsed);
+#endif
 
 /* utility functions */
 int ln_combineData_Literal(void *const org, void *const add);
