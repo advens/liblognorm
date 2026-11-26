@@ -105,7 +105,7 @@ static struct ln_parser_info parser_lookup_table[] = {
 	PARSER_ENTRY("char-sep", CharSeparated, 32),
 	PARSER_ENTRY("string", String, 32),
 #ifdef FEATURE_XML
-        PARSER_ENTRY_NO_DATA("xml", XML, 4),
+	PARSER_ENTRY_NO_DATA("xml", XML, 4),
 #endif
 };
 #define NPARSERS (sizeof(parser_lookup_table)/sizeof(struct ln_parser_info))

@@ -129,6 +129,9 @@ struct ln_turbo_ctx_s {
 #define PRSID_CHARTO            29
 #define PRSID_CHARSEP           30
 #define PRSID_STRING            31
+#ifdef FEATURE_XML
+#define PRSID_XML               32
+#endif
 
 static ln_opcode_t
 prsid_to_opcode(prsid_t prsid)
@@ -166,6 +169,9 @@ prsid_to_opcode(prsid_t prsid)
 	case PRSID_CEE_SYSLOG:     return OP_CEE_SYSLOG;
 	case PRSID_CEF:            return OP_CEF_HDR;
 	case PRSID_CHECKPOINT:     return OP_CHECKPOINT_LEA;
+#ifdef FEATURE_XML
+	case PRSID_XML:            return OP_FIELD_XML;
+#endif
 	default:                   return OP_INVALID;
 	}
 }

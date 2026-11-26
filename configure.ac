@@ -88,7 +88,10 @@ else
 fi
 AC_SUBST(FEATURE_REGEXP)
 
-# XML parsing
+# XML field parser. Off unless a pipeline passes --enable-xml. The
+# field type reads one document with libxml2 and stores a JSON object.
+# Default stays off so a build without libxml2 (a WebAssembly build,
+# for one) still configures.
 AC_ARG_ENABLE(xml,
         [AS_HELP_STRING([--enable-xml],[Enable XML parsing @<:@default=no@:>@])],
         [case "${enableval}" in
@@ -105,6 +108,7 @@ if test "$enable_xml" = "yes"; then
         )
         AC_DEFINE(FEATURE_XML, 1, [XML parsing support enabled.])
 	FEATURE_XML=1
+	pkg_config_libs_private="$pkg_config_libs_private $LIBXML2_LIBS"
 else
 	FEATURE_XML=0
 fi

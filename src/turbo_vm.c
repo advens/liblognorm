@@ -42,6 +42,10 @@
 #include <time.h>
 #include <locale.h>
 #include <json.h>
+#ifdef FEATURE_XML
+int ln_xml_parse(const char *str, size_t strLen, size_t offs,
+		 struct json_object **value, size_t *parsed);
+#endif
 json_object *ln_turbo_field_json(const ln_fast_field_t *f);
 #if defined(__has_include)
 # if __has_include(<xlocale.h>)
@@ -99,6 +103,7 @@ ln_opcode_name(ln_opcode_t op)
 	case OP_FIELD_STR_TO:   return "FIELD_STR_TO";
 	case OP_FIELD_REST:     return "FIELD_REST";
 	case OP_FIELD_JSON:     return "FIELD_JSON";
+	case OP_FIELD_XML:      return "FIELD_XML";
 	case OP_FIELD_MAC:      return "FIELD_MAC";
 	case OP_FIELD_DATE:     return "FIELD_DATE";
 	case OP_FIELD_TIME:     return "FIELD_TIME";
@@ -218,6 +223,7 @@ ln_instr_disasm(const ln_instr_t *inst, char *buf, size_t len)
 	case OP_FIELD_QUOTED:
 	case OP_FIELD_REST:
 	case OP_FIELD_JSON:
+	case OP_FIELD_XML:
 	case OP_FIELD_MAC:
 	case OP_FIELD_DATE:
 	case OP_FIELD_TIME:
@@ -2933,6 +2939,38 @@ vm_json_flatten(ln_vm_t *vm, const char *field_name,
 	return 0;
 }
 
+#ifdef FEATURE_XML
+/* The walker stores the XML document as a JSON object. Serialize that
+ * object and reuse the JSON flattener so turbo and the walker agree,
+ * including a "." field name, which inlines the root keys. */
+static int
+vm_apply_xml(ln_vm_t *vm, const ln_instr_t *inst, const char *ip,
+	     size_t remaining, size_t *out_consumed)
+{
+	struct json_object *doc = NULL;
+	const char *rendered;
+	size_t consumed = 0;
+	size_t ignored = 0;
+	int r;
+
+	if(ln_xml_parse(ip, remaining, 0, &doc, &consumed) != 0
+	   || doc == NULL || consumed == 0)
+		return -1;
+	rendered = json_object_to_json_string_ext(doc, JSON_C_TO_STRING_PLAIN);
+	if(rendered == NULL) {
+		json_object_put(doc);
+		return -1;
+	}
+	r = vm_json_flatten(vm, turbo_iname(vm, inst, inst->data.str),
+			    rendered, strlen(rendered), &ignored, NULL);
+	json_object_put(doc);
+	if(r != 0)
+		return -1;
+	*out_consumed = consumed;
+	return 0;
+}
+#endif
+
 static inline int
 parse_mac48(const char *buf, size_t len, size_t *out_len)
 {
@@ -3432,6 +3470,22 @@ vm_exec_instr(ln_vm_t *vm)
 		vm->ip += len;
 		vm->pc++;
 		return 1;
+	}
+
+	case OP_FIELD_XML: {
+#ifdef FEATURE_XML
+		size_t consumed;
+
+		if (vm_apply_xml(vm, inst, vm->ip, remaining, &consumed) != 0)
+			return -1;
+		vm->ip += consumed;
+		vm->pc++;
+		return 1;
+#else
+		(void)inst;
+		(void)remaining;
+		return -1;
+#endif
 	}
 
 	case OP_FIELD_MAC: {
@@ -4914,6 +4968,26 @@ ln_vm_continue(ln_vm_t *vm)
 		ip += len;
 		pc++;
 		DISPATCH();
+	}
+
+	CASE(field_xml) {
+#ifdef FEATURE_XML
+		const ln_instr_t *inst = INST();
+		size_t consumed;
+
+		vm->ip = ip;
+		if (UNLIKELY(vm_apply_xml(vm, inst, ip, REMAINING(), &consumed) != 0)) {
+			WRITEBACK();
+			BACKTRACK();
+		}
+		ip += consumed;
+		pc++;
+		DISPATCH();
+#else
+		(void)ip;
+		WRITEBACK();
+		BACKTRACK();
+#endif
 	}
 
 	CASE(field_mac) {

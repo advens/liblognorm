@@ -99,6 +99,7 @@
 		dispatch_table[OP_FIELD_STR_TO]    = &&op_field_str_to; \
 		dispatch_table[OP_FIELD_REST]      = &&op_field_rest; \
 		dispatch_table[OP_FIELD_JSON]      = &&op_field_json; \
+		dispatch_table[OP_FIELD_XML]       = &&op_field_xml; \
 		dispatch_table[OP_FIELD_MAC]       = &&op_field_mac; \
 		dispatch_table[OP_FIELD_DATE]      = &&op_field_date; \
 		dispatch_table[OP_FIELD_REGEX]     = &&op_field_regex; \

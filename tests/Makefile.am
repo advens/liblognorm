@@ -29,7 +29,7 @@ unparsed_data_binary_LDFLAGS = -no-install
 
 literal_embedded_nul_SOURCES = literal_embedded_nul.c
 literal_embedded_nul_CPPFLAGS = $(JSON_C_CFLAGS) $(WARN_CFLAGS) -I$(top_srcdir)/src
-literal_embedded_nul_LDADD = $(top_builddir)/src/.libs/liblognorm.a $(JSON_C_LIBS) $(LIBESTR_LIBS)
+literal_embedded_nul_LDADD = $(top_builddir)/src/.libs/liblognorm.a $(JSON_C_LIBS) $(LIBESTR_LIBS) $(LIBXML2_LIBS)
 literal_embedded_nul_LDFLAGS = -no-install
 
 #user_test_SOURCES = user_test.c
@@ -214,10 +214,6 @@ REGEXP_TESTS = \
 	field_tokenized_with_regex.sh \
 	field_regex_while_regex_support_is_disabled.sh
 
-XML_TESTS = \
-	field_xml.sh \
-	field_xml_jsoncnf.sh
-
 EXTRA_DIST = exec.sh \
 	$(TESTS_SHELLSCRIPTS) \
 	$(TESTS_TURBO_SHELLS) \
@@ -231,6 +227,10 @@ EXTRA_DIST = exec.sh \
 	rewrite_test.c \
 	rewrite_fuzz.c \
 	$(user_test_SOURCES)
+
+if ENABLE_XML
+TESTS += field_xml.sh field_xml_jsoncnf.sh
+endif
 
 if ENABLE_REGEXP
 TESTS += $(REGEXP_TESTS)
@@ -327,8 +327,4 @@ turbo_test_json_LDADD = ../src/liblognorm.la -lm
 turbo_test_json_LDFLAGS = -no-install
 
 TESTS += turbo_test_arena turbo_test_result turbo_test_simd turbo_test_vm turbo_test_json turbo_test_compile turbo_test_date turbo_test_dupfield turbo_test_cef turbo_test_annot turbo_test_maxval turbo_test_time turbo_test_charset turbo_test_word turbo_test_leadws turbo_test_checkpoint turbo_test_find
-endif
-
-if ENABLE_XML
-TESTS += $(XML_TESTS)
 endif
